@@ -440,7 +440,7 @@ class Chat(Frame):
                 iv = b64decode(message[:message.index(':')])
                 ct = b64decode(message[message.index(':') + 1:])
                 cipher = AES.new(key, AES.MODE_CBC, iv)
-                message = b64encode(unpad(cipher.decrypt(ct), AES.block_size)).decode('utf-8')
+                message = unpad(cipher.decrypt(ct), AES.block_size).decode()
 
             if len(chat_message) == 4:
                 if chat_type == "private" and self.partner[0] == self.partner[1] and additional_msg == "member":
@@ -776,7 +776,7 @@ class Chat(Frame):
 
             to_be_encrypted = message.split("#split:#")[0]
 
-            message_bytes = b64decode(to_be_encrypted + "==")
+            message_bytes = bytes(to_be_encrypted, 'utf-8')
 
             cipher = AES.new(current_key, AES.MODE_CBC)
             ct_bytes = cipher.encrypt(pad(message_bytes, AES.block_size))
@@ -784,6 +784,14 @@ class Chat(Frame):
             encrypted = b64encode(cipher.iv).decode('utf-8') + ":" + b64encode(ct_bytes).decode('utf-8')
 
             message = encrypted + message[len(message.split("#split:#")[0]):]
+
+            # just for testing
+
+            new_cipher = AES.new(current_key, AES.MODE_CBC, cipher.iv)
+
+            write = open("test.txt", "w")
+            write.write(unpad(new_cipher.decrypt(ct_bytes), AES.block_size).decode())
+            write.close()
 
         to_save = self.username + "#split:#" + message
 
