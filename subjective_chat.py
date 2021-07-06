@@ -424,15 +424,17 @@ class Chat(Frame):
             message = chat_message[1]  # the real content / message
             additional_msg = chat_message[2]
 
-            if len(chat_message) == 4 and chat_message[3] == "key":
+            '''
+            if len(chat_message) == 4 and additional_msg == "msg" and chat_message[3] == "key":
                 key = chat_message[4]
-                file2write = open("key_" + self.partner[0], 'wb')
+                file2write = open("key_" + chatID, 'wb')
                 file2write.write(b64decode(key))
                 file2write.close()
+            '''
 
             # get the key from the file
-            if 'key' in globals():
-                key = open("key_" + self.partner[0], "rb").readlines()[0]
+            if os.path.isfile("key_" + chatID) and additional_msg == "msg":
+                key = open("key_" + chatID, "rb").readlines()[0]
 
                 # seperate the received message into the initiation vector and the ciphertext
                 iv = b64decode(message[:message.index(':')])
@@ -763,23 +765,18 @@ class Chat(Frame):
 
         if message.split("#split:#")[1] == "msg":
 
-            if not os.path.isfile("key_" + self.partner[0]):
+            if not os.path.isfile("key_" + chatID):
                 generated_key = get_random_bytes(16)
-                file2write = open("key_" + self.partner[0], 'wb')
+                file2write = open("key_" + chatID, 'wb')
                 file2write.write(generated_key)
                 file2write.close()
                 send_key = True
 
-            current_key = open("key_" + self.partner[0], "rb").readlines()[0]
+            current_key = open("key_" + chatID, "rb").readlines()[0]
 
-            to_be_encrypted = message.split("#split:#")[1]
+            to_be_encrypted = message.split("#split:#")[0]
 
-            # message_bytes = b64decode(to_be_encrypted + "==")
-
-            if len(to_be_encrypted) % 4 == 1:
-                message_bytes = b64decode(to_be_encrypted + "a==")
-            else:
-                message_bytes = b64decode(to_be_encrypted + "==")
+            message_bytes = b64decode(to_be_encrypted + "==")
 
             cipher = AES.new(current_key, AES.MODE_CBC)
             ct_bytes = cipher.encrypt(pad(message_bytes, AES.block_size))
