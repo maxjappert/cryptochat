@@ -418,25 +418,34 @@ class Chat(Frame):
         chat_type = chat[0][0].split("#split:#")[3]  # get the type of the chat (private or group)
 
         for i in range(1, len(chat)):
+
             chat_message = chat[i][0].split(
                 "#split:#")  # a chat-message is like: username#split:#message, so we need to split this two
             partner_username = chat_message[0]  # from who is the message
             message = chat_message[1]  # the real content / message
             additional_msg = chat_message[2]
 
-            '''
-            if len(chat_message) == 4 and additional_msg == "msg" and chat_message[3] == "key":
-                key = chat_message[4]
-                file2write = open("key_" + chatID, 'wb')
-                file2write.write(b64decode(key))
-                file2write.close()
-            '''
+            encrypted_message = False
 
             # get the key from the file
             if os.path.isfile("key_" + chatID) and additional_msg == "msg":
                 key = open("key_" + chatID, "rb").readlines()[0]
 
-                # seperate the received message into the initiation vector and the ciphertext
+                encrypted_message = True
+            # if such a file doesn't exist, then the current message must have sent a key, which is then saved into
+            # a file for further usage
+            elif additional_msg == "msg" and chat_message[3] == "key":
+                key = b64decode(chat_message[4])
+                file2write = open("key_" + chatID, 'wb')
+                file2write.write(key)
+                file2write.close()
+
+                encrypted_message = True
+
+            # if the event is an actual message and therefore is encrypted, the iv and the ciphertext are extracted and
+            # the message is decrypted
+            if encrypted_message:
+                # separate the received message into the initiation vector and the ciphertext
                 iv = b64decode(message[:message.index(':')])
                 ct = b64decode(message[message.index(':') + 1:])
                 cipher = AES.new(key, AES.MODE_CBC, iv)
@@ -759,19 +768,22 @@ class Chat(Frame):
             self.text_field.delete(0, 'end')
 
     def save(self, message, chatID):
-        # if there's no key o
 
         send_key = False
 
         if message.split("#split:#")[1] == "msg":
 
+            # if there's no file with the key for the conversation, then the client has started the chat, thereby generates
+            # the key and ups the flag telling program to send the key together with the first message
             if not os.path.isfile("key_" + chatID):
                 generated_key = get_random_bytes(16)
                 file2write = open("key_" + chatID, 'wb')
                 file2write.write(generated_key)
                 file2write.close()
+
                 send_key = True
 
+            # read the key from the file
             current_key = open("key_" + chatID, "rb").readlines()[0]
 
             to_be_encrypted = message.split("#split:#")[0]
@@ -781,22 +793,18 @@ class Chat(Frame):
             cipher = AES.new(current_key, AES.MODE_CBC)
             ct_bytes = cipher.encrypt(pad(message_bytes, AES.block_size))
 
+            # the initiation vector and the ciphertext message are concatenated and separated with a semicolon
             encrypted = b64encode(cipher.iv).decode('utf-8') + ":" + b64encode(ct_bytes).decode('utf-8')
 
+            # all put back into the required format
             message = encrypted + message[len(message.split("#split:#")[0]):]
 
-            # just for testing
-
-            new_cipher = AES.new(current_key, AES.MODE_CBC, cipher.iv)
-
-            write = open("test.txt", "w")
-            write.write(unpad(new_cipher.decrypt(ct_bytes), AES.block_size).decode())
-            write.close()
+            # if this flag is raised, then the message is the first message of the conversation and thereby sends the
+            # key which is henceforth used as the symmetric session key
+            if send_key:
+                message = message + "#split:#key#split:#" + b64encode(current_key).decode('utf-8')
 
         to_save = self.username + "#split:#" + message
-
-        if send_key:
-            to_save = to_save + "#split:#key#split:#" + b64encode(current_key).decode('utf-8')
 
         new_event = self.ecf.next_event('chat/saveMessage',
                                         {'messagekey': to_save, 'chat_id': chatID, 'timestampkey': time.time()})
