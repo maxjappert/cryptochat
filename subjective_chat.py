@@ -428,13 +428,13 @@ class Chat(Frame):
             encrypted_message = False
 
             # get the key from the file
-            if os.path.isfile("key_" + chatID) and additional_msg == "msg":
+            if os.path.isfile("key_" + chatID) and (additional_msg == "msg" or additional_msg == "img"):
                 key = open("key_" + chatID, "rb").readlines()[0]
 
                 encrypted_message = True
             # if such a file doesn't exist, then the current message must have sent a key, which is then saved into
             # a file for further usage
-            elif additional_msg == "msg" and chat_message[3] == "key":
+            elif (additional_msg == "msg" or additional_msg == "img" or additional_msg == "pdf") and chat_message[3] == "key":
                 key = b64decode(chat_message[4])
                 file2write = open("key_" + chatID, 'wb')
                 file2write.write(key)
@@ -771,7 +771,7 @@ class Chat(Frame):
 
         send_key = False
 
-        if message.split("#split:#")[1] == "msg":
+        if message.split("#split:#")[1] == "msg" or message.split("#split:#")[1] == "img" or message.split("#split:#")[1] == "pdf":
 
             # if there's no file with the key for the conversation, then the client has started the chat, thereby generates
             # the key and ups the flag telling program to send the key together with the first message
