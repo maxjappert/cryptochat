@@ -1,3 +1,5 @@
+from sys import getsizeof
+
 try:
     from Tkinter import *
 except ImportError:
@@ -33,12 +35,14 @@ import math
 import platform
 import time
 import datetime
-from Crypto.Cipher import AES
-from Crypto.Util.Padding import pad
-from Crypto.Util.Padding import unpad
-from Crypto.Random import get_random_bytes
+from Cryptodome.Cipher import AES
+from Cryptodome.Util.Padding import pad
+from Cryptodome.Util.Padding import unpad
+from Cryptodome.Random import get_random_bytes
 from base64 import b64encode
 from base64 import b64decode
+
+import pyDH
 
 # determine platform
 system = platform.system()  # currently only supports Linux (works on other platforms but the look and feel is not the same)
@@ -232,6 +236,37 @@ class DisplayFile(Frame):
             webbrowser.open(file_path)
 
 
+def write_dh_object_to_file():
+    """ Write a dh-object to the diffie_hellman-file """
+    dh = pyDH.DiffieHellman()
+    with open("diffie_hellman", 'wb') as diffie_file:
+        pickle.dump(dh, diffie_file)
+        return dh
+
+
+def write_shared_private_key(partners_pubkey):
+    """ Write a private key to the shared_key-file """
+    dh = read_dh_object_from_file()
+    shared_key = dh.gen_shared_key(partners_pubkey)
+    with open("shared_key", 'wb') as shared_key_file:
+        pickle.dump(shared_key, shared_key_file)
+        return shared_key
+
+
+def read_dh_object_from_file():
+    """ Read the dh-object from the diffie_hellman-file """
+    with open("diffie_hellman", 'rb') as diffie_file:
+        dh = pickle.load(diffie_file)
+        return dh
+
+
+def read_shared_key_from_file():
+    """ Read the private key from the shared_key-file """
+    with open("shared_key", 'rb') as shared_key_file:
+        shared_key = pickle.load(shared_key_file)
+        return shared_key
+
+
 class Chat(Frame):
 
     def __init__(self, master=None):
@@ -423,39 +458,68 @@ class Chat(Frame):
                 "#split:#")  # a chat-message is like: username#split:#message, so we need to split this two
             partner_username = chat_message[0]  # from who is the message
             message = chat_message[1]  # the real content / message
-            additional_msg = chat_message[2]
+            message_flag = chat_message[2]
+            if len(chat_message) > 3:
+                key_flag = chat_message[3]
 
-            encrypted_message = False
+            is_message_encrypted = False
 
             # get the key from the file
-            if os.path.isfile("key_" + chatID) and (additional_msg == "msg" or additional_msg == "img"):
-                key = open("key_" + chatID, "rb").readlines()[0]
+            if message_flag == "msg" or message_flag == "img":
+                is_message_encrypted = True
 
-                encrypted_message = True
             # if such a file doesn't exist, then the current message must have sent a key, which is then saved into
             # a file for further usage
-            elif (additional_msg == "msg" or additional_msg == "img" or additional_msg == "pdf") and chat_message[3] == "key":
+            elif (message_flag == "msg" or message_flag == "img" or message_flag == "pdf") and key_flag == "key":
                 key = b64decode(chat_message[4])
-                file2write = open("key_" + chatID, 'wb')
-                file2write.write(key)
-                file2write.close()
+                is_message_encrypted = True
 
-                encrypted_message = True
+            if key_flag == "pubkey":  # TODO: I don't think this statement is necessary
+                is_message_encrypted = True
+            elif key_flag == "key":
+                key = b64decode(chat_message[4])
 
             # if the event is an actual message and therefore is encrypted, the iv and the ciphertext are extracted and
             # the message is decrypted
-            if encrypted_message:
+            if is_message_encrypted:
+
+                if os.path.isfile("shared_key") and key_flag == "pubkey":
+                    # this is the case when user2 receives his own message
+                    key = read_shared_key_from_file()
+                    key = key[0:32].encode()
+                elif not os.path.isfile("shared_key") and key_flag == "pubkey":
+                    # user1 receives a message from user2, user1 doesn't have a private key yet
+                    if read_dh_object_from_file().gen_public_key() != int(chat_message[-1]):
+                        key = write_shared_private_key(int(chat_message[-1]))
+                        key = key[0:32].encode()
+
                 # separate the received message into the initiation vector and the ciphertext
-                iv = b64decode(message[:message.index(':')])
-                ct = b64decode(message[message.index(':') + 1:])
+                message_split = message.split(':')
+                iv = b64decode(message_split[0])
+                ct = b64decode(message_split[1])
+
                 cipher = AES.new(key, AES.MODE_CBC, iv)
                 message = unpad(cipher.decrypt(ct), AES.block_size).decode()
 
+                if "pubkey" in chat_message:
+                    if os.path.exists("diffie_hellman"):
+                        # if the keyword pubkey was attached to the message and a file exists, we need to check whether
+                        # they are equal --> if equal: sender is receiving his own message, if not: user1 messages user2
+                        receiver_dh = read_dh_object_from_file()
+                        receiver_dh.gen_public_key()
+
+                        if receiver_dh.gen_public_key() != int(chat_message[-1]):  # we need to create a new dh-object
+                            write_shared_private_key(int(chat_message[-1]))
+
+                    else:  # if the user has no diffie_file, we need to create one and create a private key
+                        write_dh_object_to_file()
+                        write_shared_private_key(int(chat_message[-1]))
+
             if len(chat_message) == 4:
-                if chat_type == "private" and self.partner[0] == self.partner[1] and additional_msg == "member":
-                    for i in range(len(self.person_list)):
-                        if self.partner[1] == self.person_list[i][1]:
-                            self.person_list[i][
+                if chat_type == "private" and self.partner[0] == self.partner[1] and message_flag == "member":
+                    for ind in range(len(self.person_list)):
+                        if self.partner[1] == self.person_list[ind][1]:
+                            self.person_list[ind][
                                 0] = partner_username  # the creator of the group gets the name of his partner for the first time
                             self.partner[0] = partner_username
                             self.username_label.config(text=TextWrapper.shorten_name(self.partner[0], 34))
@@ -472,18 +536,18 @@ class Chat(Frame):
                             self.listBox1.itemconfig('end', bg='white', foreground='#00a86b')
                         self.listBox2.insert('end', "")
 
-                    if additional_msg[0:3] == "pdf":
+                    if message_flag[0:3] == "pdf":
                         self.listBox1.insert('end', "Click to open pdf. (" + str(i) + ")")
                         self.listBox1.itemconfig('end', bg='white')
                         self.listBox2.insert('end', "")
-                    elif additional_msg[0:3] == "img":
+                    elif message_flag[0:3] == "img":
                         self.listBox1.insert('end', "Click to open image. (" + str(i) + ")")
                         self.listBox1.itemconfig('end', bg='white')
                         self.listBox2.insert('end', "")
                     else:
                         messages = TextWrapper.textWrap(message, 0)
-                        for i in range(len(messages)):
-                            self.listBox1.insert('end', messages[i])
+                        for index in range(len(messages)):
+                            self.listBox1.insert('end', messages[index])
                             self.listBox1.itemconfig('end', bg='white')
                             self.listBox2.insert('end', '')
 
@@ -499,11 +563,11 @@ class Chat(Frame):
 
                 else:  # username = self.username: message from the user
                     # print the message with green background:
-                    if additional_msg[0:3] == "pdf":
+                    if message_flag[0:3] == "pdf":
                         self.listBox2.insert('end', "Click to open PDF. (" + str(i) + ")")
                         self.listBox2.itemconfig('end', bg='#dafac9')
                         self.listBox1.insert('end', '')
-                    elif additional_msg[0:3] == "img":
+                    elif message_flag[0:3] == "img":
                         self.listBox2.insert('end', "Click to open image. (" + str(i) + ")")
                         self.listBox2.itemconfig('end', bg='#dafac9')
                         self.listBox1.insert('end', '')
@@ -769,28 +833,32 @@ class Chat(Frame):
 
     def save(self, message, chatID):
 
-        send_key = False
+        send_initial_key = True
 
-        if message.split("#split:#")[1] == "msg" or message.split("#split:#")[1] == "img" or message.split("#split:#")[1] == "pdf":
+        if message.split("#split:#")[1] == "msg" or message.split("#split:#")[1] == "img" or message.split("#split:#")[
+            1] == "pdf":
+
+            generated_key = get_random_bytes(16)
 
             # if there's no file with the key for the conversation, then the client has started the chat, thereby generates
             # the key and ups the flag telling program to send the key together with the first message
             if not os.path.isfile("key_" + chatID):
-                generated_key = get_random_bytes(16)
                 file2write = open("key_" + chatID, 'wb')
                 file2write.write(generated_key)
                 file2write.close()
 
-                send_key = True
-
-            # read the key from the file
-            current_key = open("key_" + chatID, "rb").readlines()[0]
+                send_initial_key = True
 
             to_be_encrypted = message.split("#split:#")[0]
 
             message_bytes = bytes(to_be_encrypted, 'utf-8')
 
-            cipher = AES.new(current_key, AES.MODE_CBC)
+            if os.path.isfile("shared_key"):
+                generated_key = read_shared_key_from_file()
+                generated_key = bytes(generated_key[0:32], 'utf-8')
+                send_initial_key = False
+
+            cipher = AES.new(generated_key, AES.MODE_CBC)
             ct_bytes = cipher.encrypt(pad(message_bytes, AES.block_size))
 
             # the initiation vector and the ciphertext message are concatenated and separated with a semicolon
@@ -799,10 +867,17 @@ class Chat(Frame):
             # all put back into the required format
             message = encrypted + message[len(message.split("#split:#")[0]):]
 
+            if not os.path.isfile("diffie_hellman"):  # write the newly generated public key to the pubkey file
+                # and attach it to the message
+                write_dh_object_to_file().gen_public_key()
+
             # if this flag is raised, then the message is the first message of the conversation and thereby sends the
             # key which is henceforth used as the symmetric session key
-            if send_key:
-                message = message + "#split:#key#split:#" + b64encode(current_key).decode('utf-8')
+            if send_initial_key:
+                message_pubkey = "#split:#pubkey#split:#" + str(read_dh_object_from_file().gen_public_key())
+                message = message + "#split:#key#split:#" + b64encode(generated_key).decode('utf-8') + message_pubkey
+            else:
+                message = message + "#split:#pubkey#split:#" + str(read_dh_object_from_file().gen_public_key())
 
         to_save = self.username + "#split:#" + message
 
@@ -972,8 +1047,8 @@ class Chat(Frame):
             random.SystemRandom().choice(string.ascii_lowercase + string.ascii_uppercase + string.digits) for i in
             range(6)))
         for i in range(len(ID)):
-            if ID[i] == 'I' or ID[
-                i] == 'l':  # to increase readibility we do not allow I and l since they aren't differentiatable in out chosen Font
+            if ID[i] == 'I' or ID[i] == 'l':  # to increase readibility we do not allow I
+                # and l since they aren't differentiatable in out chosen Font
                 ID[i] = str(random.randint(0, 9))
         return (''.join(ID))
 
