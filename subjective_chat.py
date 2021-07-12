@@ -257,12 +257,11 @@ class Chat(Frame):
         self.lastMessage = list()
         self.chat_function = ChatFunction()
         self.stored_messages = 0
-        self.sent_member_messages = 0
         self.chat_messages_index = 1
         self.pubkey = 0
+        self.partners_pubkey = 0
         self.messages = []
-        self.member_message_index = 0
-        self.is_member_message = True
+        self.send_pubkey = True
 
         # Set EventFactory
         x = self.chat_function.get_current_event(self.chat_function.get_all_feed_ids()[1])
@@ -444,39 +443,37 @@ class Chat(Frame):
             shared_key = pickle.load(shared_key_file)
             return shared_key
 
-    def write_message_to_file(self, encrypted_message, sender_pubkey, chatID, timestamp):
-        timestamp = time.strftime("%H:%M %d.%m.%Y", time.gmtime(timestamp + 7200))
+    def read_partners_public_key(self, chatID):
+        """ Read the public key of the correspondent from file"""
+        if os.path.isfile(f"partners_pubkey_{chatID}"):
+            with open(f"partners_pubkey_{chatID}", 'r') as partners_pubkey_file:
+                self.partners_pubkey = pickle.load(partners_pubkey_file)
+
+    def write_message_to_file(self, encrypted_message, chatID, timestamp, username, message_flag):
+        """ Write the encrypted messages to a file"""
+        timestamp = datetime.datetime.fromtimestamp(timestamp)
+        timestamp_string = timestamp.strftime("%H:%M %d.%m.%Y")
         if not os.path.isfile(f"stored_messages_{chatID}.json"):  # create the file if it doesn't exist
             with open(f"stored_messages_{chatID}.json", 'w') as messages_file:
                 self.messages = ["initial"]
                 json.dump(self.messages, messages_file)
 
-        if self.pubkey != sender_pubkey:  # message from user1 to user2
-            self.stored_messages += 1
-            with open(f"stored_messages_{chatID}.json", "r+") as stored_messages_file:
+        self.stored_messages += 1
+        with open(f"stored_messages_{chatID}.json", "r+") as stored_messages_file:
+            self.messages = json.load(stored_messages_file)
+            if self.messages[0] == "initial":
+                self.messages = [(username, encrypted_message, timestamp_string, message_flag)]
+                stored_messages_file.seek(0)
+                json.dump(self.messages, stored_messages_file)
+            else:
+                self.messages.append((username, encrypted_message, timestamp_string, message_flag))
+                stored_messages_file.seek(0)
+                json.dump(self.messages, stored_messages_file)
+
+    def read_messages_from_file(self, chatID):
+        if os.path.isfile(f"stored_messages_{chatID}.json"):
+            with open(f"stored_messages_{chatID}.json", 'r') as stored_messages_file:
                 self.messages = json.load(stored_messages_file)
-                if self.messages[0] == "initial":
-                    self.messages = [("other", encrypted_message, timestamp)]
-                    stored_messages_file.seek(0)
-                    json.dump(self.messages, stored_messages_file)
-                else:
-                    self.messages.append(("other", encrypted_message, timestamp))
-                    stored_messages_file.seek(0)
-                    json.dump(self.messages, stored_messages_file)
-
-        else:  # user receives his own message
-            with open(f"stored_messages_{chatID}.json", "r+") as stored_messages_file:
-                self.messages = json.load(stored_messages_file)
-                if self.messages[0] == "initial":
-                    self.messages = [("you", encrypted_message, timestamp)]
-                    stored_messages_file.seek(0)
-                    json.dump(self.messages, stored_messages_file)
-
-                else:
-                    self.messages.append(("you", encrypted_message, timestamp))
-                    stored_messages_file.seek(0)
-                    json.dump(self.messages, stored_messages_file)
-
 
     def add(self, chatID):
 
@@ -490,6 +487,14 @@ class Chat(Frame):
         chat = self.chat_function.get_full_chat(chatID)
         chat_type = chat[0][0].split("#split:#")[3]  # get the type of the chat (private or group)
 
+        # We only want to loop through the messages that are not already in the stored_messages_file
+        # since we might not have the right private key to decrypt the message
+        self.read_messages_from_file(chatID)  # self.messages reads the messages that were written to file
+        if not os.path.isfile(f"shared_key_{chatID}") and len(chat) > 1:
+            self.chat_messages_index = len(self.messages) + 1
+        elif os.path.isfile(f"shared_key_{chatID}"):
+            self.chat_messages_index = len(self.messages) + 2
+
         for i in range(self.chat_messages_index, len(chat)):
 
             chat_message = chat[i][0].split(
@@ -497,6 +502,7 @@ class Chat(Frame):
             partner_username = chat_message[0]  # from who is the message
             message = chat_message[1]  # the real content / message
             message_flag = chat_message[2]
+            key_flag = ""
             if len(chat_message) > 3:
                 key_flag = chat_message[3]
 
@@ -521,14 +527,18 @@ class Chat(Frame):
             # the message is decrypted
             if is_message_encrypted:
 
+                if "pubkey" in chat_message:
+                    sender_pubkey = int(chat_message[-1])
+
                 if os.path.isfile(f"shared_key_{chatID}") and key_flag == "pubkey":
                     # this is the case when user2 receives his own message
                     key = self.read_shared_key_from_file(chatID)
                     key = key[0:32].encode()
                 elif not os.path.isfile(f"shared_key_{chatID}") and key_flag == "pubkey":
                     # user1 receives a message from user2, user1 doesn't have a private key yet
-                    if self.read_dh_object_from_file(chatID).gen_public_key() != int(chat_message[-1]):
-                        key = self.write_shared_private_key(int(chat_message[-1]), chatID)
+                    self.pubkey = self.read_dh_object_from_file(chatID).gen_public_key()
+                    if self.read_dh_object_from_file(chatID).gen_public_key() != sender_pubkey:
+                        key = self.write_shared_private_key(sender_pubkey, chatID)
                         key = key[0:32].encode()
 
                 # separate the received message into the initiation vector and the ciphertext
@@ -538,36 +548,39 @@ class Chat(Frame):
 
                 cipher = AES.new(key, AES.MODE_CBC, iv)
                 message = unpad(cipher.decrypt(ct), AES.block_size).decode()
-                sender_pubkey = int(chat_message[-1])
 
                 if "pubkey" in chat_message:
                     if os.path.exists(f"diffie_hellman_{chatID}"):
                         # if the keyword pubkey was attached to the message and a file exists, we need to check whether
                         # they are equal --> if equal: sender is receiving his own message, if not: user1 messages user2
-                        receiver_dh = self.read_dh_object_from_file(chatID)
-                        self.pubkey = receiver_dh.gen_public_key()
+                        self.pubkey = self.read_dh_object_from_file(chatID).gen_public_key()
 
-                        if receiver_dh.gen_public_key() != sender_pubkey:  # we need to create a new dh-object
+                        if self.pubkey != sender_pubkey:  # we need to create a new dh-object
                             self.write_shared_private_key(sender_pubkey, chatID)
 
                     else:  # if the user has no diffie_file, we need to create one and create a private key
                         self.write_dh_object_to_file(chatID)
                         self.write_shared_private_key(sender_pubkey, chatID)
 
-                if os.path.isfile(f"shared_key_{chatID}"):
-                    amount_of_messages = len(chat) - 2
-                    message_difference = amount_of_messages - len(self.messages)
-                    if self.stored_messages < self.member_message_index:
-                        self.write_message_to_file(message, sender_pubkey, chatID, self.time)
+                    # not sure whether this works...
+                    if os.path.isfile(f"shared_key_{chatID}"):
+                        self.pubkey = self.write_dh_object_to_file(chatID).gen_public_key()
 
-                else:
-                    amount_of_messages = len(chat) - 1
-                    message_difference = amount_of_messages - len(self.messages)
-                    if i == len(chat) - message_difference:
-                        self.write_message_to_file(message, sender_pubkey, chatID, chat[i][1])
+                self.write_message_to_file(message, chatID, chat[i][1], partner_username, message_flag)
+                # if os.path.isfile(f"shared_key_{chatID}"):
+                #     amount_of_messages = len(chat) - 2
+                #     message_difference = amount_of_messages - len(self.messages)
+                #     self.write_message_to_file(message, chatID, chat[i][1], partner_username,
+                #                                message_flag)
+                #
+                # else:
+                #     amount_of_messages = len(chat) - 1
+                #     message_difference = amount_of_messages - len(self.messages)
+                #     if i == len(chat) - message_difference:
+                #         self.write_message_to_file(message, chatID, chat[i][1], partner_username,
+                #                                    message_flag)
 
             if len(chat_message) == 4:
-                self.member_message_index = i
                 if chat_type == "private" and self.partner[0] == self.partner[1] and message_flag == "member":
                     for ind in range(len(self.person_list)):
                         if self.partner[1] == self.person_list[ind][1]:
@@ -577,44 +590,44 @@ class Chat(Frame):
                             self.username_label.config(text=TextWrapper.shorten_name(self.partner[0], 34))
                 continue
 
-        if len(chat) > 1:
-            self.print_messages_to_ui(partner_username, chat_type, message_flag, message, chat)
-        self.chat_messages_index = self.sent_member_messages + self.stored_messages
+        self.print_messages_to_ui(chat_type)
+        self.chat_messages_index = self.stored_messages + 2 if os.path.isfile(f"shared_key_{chatID}") else 1
 
     def updateContent(self, chatID):
         self.add(chatID)
         self.addPartners()
 
-    def print_messages_to_ui(self, partner_username, chat_type, message_flag, message, chat):
+    def print_messages_to_ui(self, chat_type):
 
         for message in self.messages:
-            if message[0] == "other":  # message from the partner(s)
+            if message[0] != self.username:  # message from the partner(s)
                 # print the message with white background:
                 if chat_type == "group":
-                    self.listBox1.insert('end', partner_username + ":")
+                    self.listBox1.insert('end', message[1] + ":")
                     try:
                         self.listBox1.itemconfig('end', bg='white',
-                                                 foreground=Colorize.name_to_color(partner_username))
+                                                 foreground=Colorize.name_to_color(message[1]))
                     except:
                         self.listBox1.itemconfig('end', bg='white', foreground='#00a86b')
                     self.listBox2.insert('end', "")
 
-                if message_flag[0:3] == "pdf":
+                # message[3] = message_flag --> {"img", "pdf", "msg"}
+                if message[3] == "pdf":
                     self.listBox1.insert('end', "Click to open pdf.")
                     self.listBox1.itemconfig('end', bg='white')
                     self.listBox2.insert('end', "")
-                elif message_flag[0:3] == "img":
+                elif message[3] == "img":
                     self.listBox1.insert('end', "Click to open image.")
                     self.listBox1.itemconfig('end', bg='white')
                     self.listBox2.insert('end', "")
                 else:
-                    messages = TextWrapper.textWrap(message, 0)
+                    messages = TextWrapper.textWrap(message[1], 0)
                     for index in range(len(messages)):
                         self.listBox1.insert('end', messages[index])
                         self.listBox1.itemconfig('end', bg='white')
                         self.listBox2.insert('end', '')
 
-                self.listBox1.insert('end', "{:<22}{:>16}".format("", time.strftime("%H:%M %d.%m.%Y", message[2])))
+                self.listBox1.insert('end', "{:<22}{:>16}".format("", message[2]))
                 self.listBox1.itemconfig('end', bg='white', foreground="lightgrey")
                 self.listBox2.insert('end', "")
 
@@ -625,22 +638,22 @@ class Chat(Frame):
 
             else:  # username = self.username: message from the user
                 # print the message with green background:
-                if message_flag[0:3] == "pdf":
-                    self.listBox2.insert('end', "Click to open PDF.")
+                if message[3] == "pdf":
+                    self.listBox2.insert('end', "Click to open PDF. (" + str(i) + ")")
                     self.listBox2.itemconfig('end', bg='#dafac9')
                     self.listBox1.insert('end', '')
-                elif message_flag[0:3] == "img":
-                    self.listBox2.insert('end', "Click to open image.")
+                elif message[3] == "img":
+                    self.listBox2.insert('end', "Click to open image. (" + str(i) + ")")
                     self.listBox2.itemconfig('end', bg='#dafac9')
                     self.listBox1.insert('end', '')
                 else:  # == msg
-                    messages = TextWrapper.textWrap(message, 0)
+                    messages = TextWrapper.textWrap(message[1], 0)
                     for i in range(len(messages)):
                         self.listBox2.insert('end', messages[i])
                         self.listBox2.itemconfig('end', bg='#dafac9')
                         self.listBox1.insert('end', '')
 
-                self.listBox2.insert('end', "{:<22}{:>16}".format("", time.strftime("%H:%M %d.%m.%Y", message[2])))
+                self.listBox2.insert('end', "{:<22}{:>16}".format("", message[2]))
                 self.listBox2.itemconfig('end', bg='#dafac9', foreground="lightgrey")
                 self.listBox1.insert('end', '')
 
@@ -891,12 +904,10 @@ class Chat(Frame):
     def save(self, message, chatID):
 
         send_initial_key = True
-        self.is_member_message = True
 
-        if message.split("#split:#")[1] == "msg" or message.split("#split:#")[1] == "img" or message.split("#split:#")[
-            1] == "pdf":
-
-            self.is_member_message = False
+        if message.split("#split:#")[1] == "msg" or message.split("#split:#")[1] == "img" or \
+                message.split("#split:#")[
+                    1] == "pdf":
 
             generated_key = get_random_bytes(16)
 
@@ -927,22 +938,25 @@ class Chat(Frame):
             # all put back into the required format
             message = encrypted + message[len(message.split("#split:#")[0]):]
 
-            if not os.path.isfile(
-                    f"diffie_hellman_{chatID}"):  # write the newly generated public key to the pubkey file
-                # and attach it to the message
+            # write the newly generated public key to the pubkey file and attach it to the message
+            if not os.path.isfile(f"diffie_hellman_{chatID}"):
                 self.pubkey = self.write_dh_object_to_file(chatID).gen_public_key()
+            else:
+                self.pubkey = self.read_dh_object_from_file(chatID).gen_public_key()
 
             # if this flag is raised, then the message is the first message of the conversation and thereby sends the
             # key which is henceforth used as the symmetric session key
             if send_initial_key:
-                message_pubkey = "#split:#pubkey#split:#" + str(self.read_dh_object_from_file(chatID).gen_public_key())
-                message = message + "#split:#key#split:#" + b64encode(generated_key).decode('utf-8') + message_pubkey
+                if self.send_pubkey:
+                    message_pubkey = "#split:#pubkey#split:#" + str(self.pubkey)
+                    message = message + "#split:#key#split:#" + b64encode(generated_key).decode('utf-8') + message_pubkey
+                else:
+                    message = message + "#split:#key#split:#" + b64encode(generated_key).decode('utf-8')
             else:
-                message = message + "#split:#pubkey#split:#" + str(
-                    self.read_dh_object_from_file(chatID).gen_public_key())
+                if self.send_pubkey:
+                    message = message + "#split:#pubkey#split:#" + str(self.pubkey)
 
-        if self.is_member_message:
-            self.sent_member_messages += 1
+            self.send_pubkey = False
 
         to_save = self.username + "#split:#" + message
 
