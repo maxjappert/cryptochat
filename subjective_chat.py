@@ -493,6 +493,7 @@ class Chat(Frame):
     def add(self, chatID):
 
         global key
+
         self.listBox1.delete(0, 'end')
         self.listBox2.delete(0, 'end')
 
