@@ -431,6 +431,10 @@ class Chat(Frame):
             pickle.dump(shared_key, shared_key_file)
             return shared_key
 
+    def write_partners_pubkey_to_file(self, pubkey, chatID):
+        with open(f"partners_pubkey_{chatID}", 'wb') as partners_pubkey_file:
+            pickle.dump(pubkey, partners_pubkey_file)
+
     def read_dh_object_from_file(self, chatID):
         """ Read the dh-object from the diffie_hellman-file """
         with open(f"diffie_hellman_{chatID}", 'rb') as diffie_file:
@@ -446,8 +450,10 @@ class Chat(Frame):
     def read_partners_public_key(self, chatID):
         """ Read the public key of the correspondent from file"""
         if os.path.isfile(f"partners_pubkey_{chatID}"):
-            with open(f"partners_pubkey_{chatID}", 'r') as partners_pubkey_file:
-                self.partners_pubkey = pickle.load(partners_pubkey_file)
+            with open(f"partners_pubkey_{chatID}", 'rb') as partners_pubkey_file:
+                return pickle.load(partners_pubkey_file)
+        else:
+            return 0
 
     def write_message_to_file(self, encrypted_message, chatID, timestamp, username, message_flag):
         """ Write the encrypted messages to a file"""
@@ -530,16 +536,21 @@ class Chat(Frame):
                 if "pubkey" in chat_message:
                     sender_pubkey = int(chat_message[-1])
 
-                if os.path.isfile(f"shared_key_{chatID}") and key_flag == "pubkey":
-                    # this is the case when user2 receives his own message
-                    key = self.read_shared_key_from_file(chatID)
-                    key = key[0:32].encode()
-                elif not os.path.isfile(f"shared_key_{chatID}") and key_flag == "pubkey":
-                    # user1 receives a message from user2, user1 doesn't have a private key yet
-                    self.pubkey = self.read_dh_object_from_file(chatID).gen_public_key()
-                    if self.read_dh_object_from_file(chatID).gen_public_key() != sender_pubkey:
-                        key = self.write_shared_private_key(sender_pubkey, chatID)
-                        key = key[0:32].encode()
+                    if key_flag == "pubkey":
+                        if not os.path.isfile(f"diffie_hellman_{chatID}"):
+                            dh = self.write_dh_object_to_file(chatID)
+                        else:
+                            dh = self.read_dh_object_from_file(chatID)
+                        self.pubkey = dh.gen_public_key()
+                        if sender_pubkey != self.pubkey:
+                            self.write_partners_pubkey_to_file(sender_pubkey, chatID)
+                            shared_key = dh.gen_shared_key(sender_pubkey)
+                        else:
+                            shared_key = self.read_shared_key_from_file(chatID)
+                        key = shared_key[0:32].encode()
+
+                    if sender_pubkey != self.pubkey:
+                        self.write_partners_pubkey_to_file(sender_pubkey, chatID)
 
                 # separate the received message into the initiation vector and the ciphertext
                 message_split = message.split(':')
@@ -549,36 +560,7 @@ class Chat(Frame):
                 cipher = AES.new(key, AES.MODE_CBC, iv)
                 message = unpad(cipher.decrypt(ct), AES.block_size).decode()
 
-                if "pubkey" in chat_message:
-                    if os.path.exists(f"diffie_hellman_{chatID}"):
-                        # if the keyword pubkey was attached to the message and a file exists, we need to check whether
-                        # they are equal --> if equal: sender is receiving his own message, if not: user1 messages user2
-                        self.pubkey = self.read_dh_object_from_file(chatID).gen_public_key()
-
-                        if self.pubkey != sender_pubkey:  # we need to create a new dh-object
-                            self.write_shared_private_key(sender_pubkey, chatID)
-
-                    else:  # if the user has no diffie_file, we need to create one and create a private key
-                        self.write_dh_object_to_file(chatID)
-                        self.write_shared_private_key(sender_pubkey, chatID)
-
-                    # not sure whether this works...
-                    if os.path.isfile(f"shared_key_{chatID}"):
-                        self.pubkey = self.write_dh_object_to_file(chatID).gen_public_key()
-
                 self.write_message_to_file(message, chatID, chat[i][1], partner_username, message_flag)
-                # if os.path.isfile(f"shared_key_{chatID}"):
-                #     amount_of_messages = len(chat) - 2
-                #     message_difference = amount_of_messages - len(self.messages)
-                #     self.write_message_to_file(message, chatID, chat[i][1], partner_username,
-                #                                message_flag)
-                #
-                # else:
-                #     amount_of_messages = len(chat) - 1
-                #     message_difference = amount_of_messages - len(self.messages)
-                #     if i == len(chat) - message_difference:
-                #         self.write_message_to_file(message, chatID, chat[i][1], partner_username,
-                #                                    message_flag)
 
             if len(chat_message) == 4:
                 if chat_type == "private" and self.partner[0] == self.partner[1] and message_flag == "member":
@@ -924,6 +906,16 @@ class Chat(Frame):
 
             message_bytes = bytes(to_be_encrypted, 'utf-8')
 
+            # write the newly generated public key to the pubkey file and attach it to the message
+            if not os.path.isfile(f"diffie_hellman_{chatID}"):
+                self.pubkey = self.write_dh_object_to_file(chatID).gen_public_key()
+            else:
+                self.pubkey = self.read_dh_object_from_file(chatID).gen_public_key()
+
+            self.partners_pubkey = self.read_partners_public_key(chatID)
+            if self.partners_pubkey != 0:
+                self.write_shared_private_key(self.partners_pubkey, chatID)
+
             if os.path.isfile(f"shared_key_{chatID}"):
                 generated_key = self.read_shared_key_from_file(chatID)
                 generated_key = bytes(generated_key[0:32], 'utf-8')
@@ -938,18 +930,13 @@ class Chat(Frame):
             # all put back into the required format
             message = encrypted + message[len(message.split("#split:#")[0]):]
 
-            # write the newly generated public key to the pubkey file and attach it to the message
-            if not os.path.isfile(f"diffie_hellman_{chatID}"):
-                self.pubkey = self.write_dh_object_to_file(chatID).gen_public_key()
-            else:
-                self.pubkey = self.read_dh_object_from_file(chatID).gen_public_key()
-
             # if this flag is raised, then the message is the first message of the conversation and thereby sends the
             # key which is henceforth used as the symmetric session key
             if send_initial_key:
                 if self.send_pubkey:
                     message_pubkey = "#split:#pubkey#split:#" + str(self.pubkey)
-                    message = message + "#split:#key#split:#" + b64encode(generated_key).decode('utf-8') + message_pubkey
+                    message = message + "#split:#key#split:#" + b64encode(generated_key).decode(
+                        'utf-8') + message_pubkey
                 else:
                     message = message + "#split:#key#split:#" + b64encode(generated_key).decode('utf-8')
             else:
