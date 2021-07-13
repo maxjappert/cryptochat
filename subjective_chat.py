@@ -544,7 +544,7 @@ class Chat(Frame):
                         self.pubkey = dh.gen_public_key()
                         if sender_pubkey != self.pubkey:
                             self.write_partners_pubkey_to_file(sender_pubkey, chatID)
-                            shared_key = dh.gen_shared_key(sender_pubkey)
+                            shared_key = self.write_shared_private_key(sender_pubkey, chatID)
                         else:
                             shared_key = self.read_shared_key_from_file(chatID)
                         key = shared_key[0:32].encode()
