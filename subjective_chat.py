@@ -262,6 +262,7 @@ class Chat(Frame):
         self.partners_pubkey = 0
         self.messages = []
         self.send_pubkey = True
+        self.is_initiator = False
 
         # Set EventFactory
         x = self.chat_function.get_current_event(self.chat_function.get_all_feed_ids()[1])
@@ -481,6 +482,14 @@ class Chat(Frame):
             with open(f"stored_messages_{chatID}.json", 'r') as stored_messages_file:
                 self.messages = json.load(stored_messages_file)
 
+    def write_is_initiator(self, chatID):
+        with open(f"initiator_{chatID}", 'wb') as initiator_file:
+            pickle.dump(self.is_initiator, initiator_file)
+
+    def read_is_initiator(self, chatID):
+        with open(f"initiator_{chatID}", 'rb') as initiator_file:
+            self.is_initiator = pickle.load(initiator_file)
+
     def add(self, chatID):
 
         global key
@@ -500,6 +509,12 @@ class Chat(Frame):
             self.chat_messages_index = len(self.messages) + 1
         elif os.path.isfile(f"shared_key_{chatID}"):
             self.chat_messages_index = len(self.messages) + 2
+
+        if self.username == chat[0][0].split("#split:#")[0]:
+            self.is_initiator = True
+            self.write_is_initiator(chatID)
+
+        print(self.pubkey)
 
         for i in range(self.chat_messages_index, len(chat)):
 
@@ -941,6 +956,9 @@ class Chat(Frame):
                     message = message + "#split:#key#split:#" + b64encode(generated_key).decode('utf-8')
             else:
                 if self.send_pubkey:
+                    if os.path.isfile(f"initiator_{chatID}"):
+                        self.read_is_initiator(chatID)
+                        self.pubkey = self.write_dh_object_to_file(chatID).gen_public_key()
                     message = message + "#split:#pubkey#split:#" + str(self.pubkey)
 
             self.send_pubkey = False
