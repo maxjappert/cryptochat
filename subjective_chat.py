@@ -512,7 +512,15 @@ class Chat(Frame):
 
         if self.username == chat[0][0].split("#split:#")[0]:
             self.is_initiator = True
-            self.write_is_initiator(chatID)
+        else:
+            self.is_initiator = False
+        self.write_is_initiator(chatID)
+
+        if not os.path.isfile(f"diffie_hellman_{chatID}"):
+            dh = self.write_dh_object_to_file(chatID)
+            self.pubkey = dh.gen_public_key()
+        else:
+            self.pubkey = self.read_dh_object_from_file(chatID).gen_public_key()
 
         print(self.pubkey)
 
@@ -536,12 +544,9 @@ class Chat(Frame):
             # if such a file doesn't exist, then the current message must have sent a key, which is then saved into
             # a file for further usage
             elif (message_flag == "msg" or message_flag == "img" or message_flag == "pdf") and key_flag == "key":
-                key = b64decode(chat_message[4])
                 is_message_encrypted = True
 
-            if key_flag == "pubkey":  # TODO: I don't think this statement is necessary
-                is_message_encrypted = True
-            elif key_flag == "key":
+            if key_flag == "key":
                 key = b64decode(chat_message[4])
 
             # if the event is an actual message and therefore is encrypted, the iv and the ciphertext are extracted and
@@ -550,22 +555,14 @@ class Chat(Frame):
 
                 if "pubkey" in chat_message:
                     sender_pubkey = int(chat_message[-1])
-
-                    if key_flag == "pubkey":
-                        if not os.path.isfile(f"diffie_hellman_{chatID}"):
-                            dh = self.write_dh_object_to_file(chatID)
-                        else:
-                            dh = self.read_dh_object_from_file(chatID)
-                        self.pubkey = dh.gen_public_key()
-                        if sender_pubkey != self.pubkey:
-                            self.write_partners_pubkey_to_file(sender_pubkey, chatID)
-                            shared_key = self.write_shared_private_key(sender_pubkey, chatID)
-                        else:
-                            shared_key = self.read_shared_key_from_file(chatID)
-                        key = shared_key[0:32].encode()
-
                     if sender_pubkey != self.pubkey:
                         self.write_partners_pubkey_to_file(sender_pubkey, chatID)
+                        if self.is_initiator and not os.path.isfile(f"shared_key_{chatID}") and not key_flag == "key":
+                            self.write_shared_private_key(sender_pubkey, chatID)
+
+                if os.path.isfile(f"shared_key_{chatID}") and not key_flag == "key":
+                    shared_key = self.read_shared_key_from_file(chatID)
+                    key = shared_key[0:32].encode()
 
                 # separate the received message into the initiation vector and the ciphertext
                 message_split = message.split(':')
@@ -902,6 +899,12 @@ class Chat(Frame):
 
         send_initial_key = True
 
+        if not os.path.isfile(f"diffie_hellman_{chatID}"):
+            dh = self.write_dh_object_to_file(chatID)
+            self.pubkey = dh.gen_public_key()
+        else:
+            self.pubkey = self.read_dh_object_from_file(chatID).gen_public_key()
+
         if message.split("#split:#")[1] == "msg" or message.split("#split:#")[1] == "img" or \
                 message.split("#split:#")[
                     1] == "pdf":
@@ -921,20 +924,26 @@ class Chat(Frame):
 
             message_bytes = bytes(to_be_encrypted, 'utf-8')
 
-            # write the newly generated public key to the pubkey file and attach it to the message
-            if not os.path.isfile(f"diffie_hellman_{chatID}"):
-                self.pubkey = self.write_dh_object_to_file(chatID).gen_public_key()
-            else:
-                self.pubkey = self.read_dh_object_from_file(chatID).gen_public_key()
-
-            self.partners_pubkey = self.read_partners_public_key(chatID)
-            if self.partners_pubkey != 0:
-                self.write_shared_private_key(self.partners_pubkey, chatID)
-
             if os.path.isfile(f"shared_key_{chatID}"):
-                generated_key = self.read_shared_key_from_file(chatID)
-                generated_key = bytes(generated_key[0:32], 'utf-8')
+                # if this sender is not the initiator we need to generate a new public key in order to create a new
+                self.read_is_initiator(chatID)
+                self.partners_pubkey = self.read_partners_public_key(chatID)
+                if not self.is_initiator and self.send_pubkey:
+                    dh = self.write_dh_object_to_file(chatID)
+                    self.pubkey = dh.gen_public_key()
+                    dh.gen_shared_key(self.partners_pubkey)
+
+                shared_key = self.read_shared_key_from_file(chatID)
+                generated_key = bytes(shared_key[0:32], 'utf-8')
                 send_initial_key = False
+            else:
+                # if there is a partner_pubkey, we know at least 1 pair of messages was exchanged
+                self.partners_pubkey = self.read_partners_public_key(chatID)
+                if self.partners_pubkey != 0:
+                    self.write_shared_private_key(self.partners_pubkey, chatID)
+                    shared_key = self.read_shared_key_from_file(chatID)
+                    generated_key = bytes(shared_key[0:32], 'utf-8')
+                    send_initial_key = False
 
             cipher = AES.new(generated_key, AES.MODE_CBC)
             ct_bytes = cipher.encrypt(pad(message_bytes, AES.block_size))
@@ -958,7 +967,9 @@ class Chat(Frame):
                 if self.send_pubkey:
                     if os.path.isfile(f"initiator_{chatID}"):
                         self.read_is_initiator(chatID)
-                        self.pubkey = self.write_dh_object_to_file(chatID).gen_public_key()
+                        if self.is_initiator:
+                            self.pubkey = self.write_dh_object_to_file(chatID).gen_public_key()
+
                     message = message + "#split:#pubkey#split:#" + str(self.pubkey)
 
             self.send_pubkey = False
