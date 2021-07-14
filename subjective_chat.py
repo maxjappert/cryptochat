@@ -1,3 +1,4 @@
+import json
 from sys import getsizeof
 
 try:
@@ -7,7 +8,7 @@ except ImportError:
 
 # -------------
 # WHAT YOU NEED TO DO:
-#    we haven't implemented an automatic installation of the following 
+#    we haven't implemented an automatic installation of the following
 #    libraries yet so you'll need to install them manually.
 #    Here are the commands for Linux:
 
@@ -206,7 +207,7 @@ class DisplayFile(Frame):
         except FileExistsError:  # if this gives an error, then we know the file already exists.
             pass
 
-        # Convert back from hex String to bytes 
+        # Convert back from hex String to bytes
         byte_string = self.file.encode("utf-8")
 
         # Decode
@@ -236,37 +237,6 @@ class DisplayFile(Frame):
             webbrowser.open(file_path)
 
 
-def write_dh_object_to_file():
-    """ Write a dh-object to the diffie_hellman-file """
-    dh = pyDH.DiffieHellman()
-    with open("diffie_hellman", 'wb') as diffie_file:
-        pickle.dump(dh, diffie_file)
-        return dh
-
-
-def write_shared_private_key(partners_pubkey):
-    """ Write a private key to the shared_key-file """
-    dh = read_dh_object_from_file()
-    shared_key = dh.gen_shared_key(partners_pubkey)
-    with open("shared_key", 'wb') as shared_key_file:
-        pickle.dump(shared_key, shared_key_file)
-        return shared_key
-
-
-def read_dh_object_from_file():
-    """ Read the dh-object from the diffie_hellman-file """
-    with open("diffie_hellman", 'rb') as diffie_file:
-        dh = pickle.load(diffie_file)
-        return dh
-
-
-def read_shared_key_from_file():
-    """ Read the private key from the shared_key-file """
-    with open("shared_key", 'rb') as shared_key_file:
-        shared_key = pickle.load(shared_key_file)
-        return shared_key
-
-
 class Chat(Frame):
 
     def __init__(self, master=None):
@@ -286,8 +256,15 @@ class Chat(Frame):
         self.time = datetime.datetime.now()
         self.lastMessage = list()
         self.chat_function = ChatFunction()
+        self.stored_messages = 0
+        self.chat_messages_index = 1
+        self.pubkey = 0
+        self.partners_pubkey = 0
+        self.messages = []
+        self.send_pubkey = True
+        self.is_initiator = False
 
-        # Set EventFactory      
+        # Set EventFactory
         x = self.chat_function.get_current_event(self.chat_function.get_all_feed_ids()[1])
         most_recent_event = self.chat_function.get_current_event(self.feed_id)
         self.ecf = EventCreationTool.EventFactory(most_recent_event)  # damit wieder gleiche Id benutzt wird
@@ -440,9 +417,83 @@ class Chat(Frame):
         self.listBox1.yview(*args)
         self.listBox2.yview(*args)
 
+    def write_dh_object_to_file(self, chatID):
+        """ Write a dh-object to the diffie_hellman-file """
+        dh = pyDH.DiffieHellman()
+        with open(f"diffie_hellman_{chatID}", 'wb') as diffie_file:
+            pickle.dump(dh, diffie_file)
+            return dh
+
+    def write_shared_private_key(self, partners_pubkey, chatID):
+        """ Write a private key to the shared_key-file """
+        dh = self.read_dh_object_from_file(chatID)
+        shared_key = dh.gen_shared_key(partners_pubkey)
+        with open(f"shared_key_{chatID}", 'wb') as shared_key_file:
+            pickle.dump(shared_key, shared_key_file)
+            return shared_key
+
+    def write_partners_pubkey_to_file(self, pubkey, chatID):
+        with open(f"partners_pubkey_{chatID}", 'wb') as partners_pubkey_file:
+            pickle.dump(pubkey, partners_pubkey_file)
+
+    def read_dh_object_from_file(self, chatID):
+        """ Read the dh-object from the diffie_hellman-file """
+        with open(f"diffie_hellman_{chatID}", 'rb') as diffie_file:
+            dh = pickle.load(diffie_file)
+            return dh
+
+    def read_shared_key_from_file(self, chatID):
+        """ Read the private key from the shared_key-file """
+        with open(f"shared_key_{chatID}", 'rb') as shared_key_file:
+            shared_key = pickle.load(shared_key_file)
+            return shared_key
+
+    def read_partners_public_key(self, chatID):
+        """ Read the public key of the correspondent from file"""
+        if os.path.isfile(f"partners_pubkey_{chatID}"):
+            with open(f"partners_pubkey_{chatID}", 'rb') as partners_pubkey_file:
+                return pickle.load(partners_pubkey_file)
+        else:
+            return 0
+
+    def write_message_to_file(self, encrypted_message, chatID, timestamp, username, message_flag):
+        """ Write the encrypted messages to a file"""
+        timestamp = datetime.datetime.fromtimestamp(timestamp)
+        timestamp_string = timestamp.strftime("%H:%M %d.%m.%Y")
+        if not os.path.isfile(f"stored_messages_{chatID}.json"):  # create the file if it doesn't exist
+            with open(f"stored_messages_{chatID}.json", 'w') as messages_file:
+                self.messages = ["initial"]
+                json.dump(self.messages, messages_file)
+
+        self.stored_messages += 1
+        with open(f"stored_messages_{chatID}.json", "r+") as stored_messages_file:
+            self.messages = json.load(stored_messages_file)
+            if self.messages[0] == "initial":
+                self.messages = [(username, encrypted_message, timestamp_string, message_flag)]
+                stored_messages_file.seek(0)
+                json.dump(self.messages, stored_messages_file)
+            else:
+                self.messages.append((username, encrypted_message, timestamp_string, message_flag))
+                stored_messages_file.seek(0)
+                json.dump(self.messages, stored_messages_file)
+
+    def read_messages_from_file(self, chatID):
+        if os.path.isfile(f"stored_messages_{chatID}.json"):
+            with open(f"stored_messages_{chatID}.json", 'r') as stored_messages_file:
+                self.messages = json.load(stored_messages_file)
+
+    def write_is_initiator(self, chatID):
+        with open(f"initiator_{chatID}", 'wb') as initiator_file:
+            pickle.dump(self.is_initiator, initiator_file)
+
+    def read_is_initiator(self, chatID):
+        with open(f"initiator_{chatID}", 'rb') as initiator_file:
+            self.is_initiator = pickle.load(initiator_file)
+
     def add(self, chatID):
 
         global key
+
         self.listBox1.delete(0, 'end')
         self.listBox2.delete(0, 'end')
 
@@ -452,13 +503,36 @@ class Chat(Frame):
         chat = self.chat_function.get_full_chat(chatID)
         chat_type = chat[0][0].split("#split:#")[3]  # get the type of the chat (private or group)
 
-        for i in range(1, len(chat)):
+        # We only want to loop through the messages that are not already in the stored_messages_file
+        # since we might not have the right private key to decrypt the message
+        self.read_messages_from_file(chatID)  # self.messages reads the messages that were written to file
+        if not os.path.isfile(f"shared_key_{chatID}") and len(chat) > 1:
+            self.chat_messages_index = len(self.messages) + 1
+        elif os.path.isfile(f"shared_key_{chatID}"):
+            self.chat_messages_index = len(self.messages) + 2
+
+        if self.username == chat[0][0].split("#split:#")[0]:
+            self.is_initiator = True
+        else:
+            self.is_initiator = False
+        self.write_is_initiator(chatID)
+
+        if not os.path.isfile(f"diffie_hellman_{chatID}"):
+            dh = self.write_dh_object_to_file(chatID)
+            self.pubkey = dh.gen_public_key()
+        else:
+            self.pubkey = self.read_dh_object_from_file(chatID).gen_public_key()
+
+        print(self.pubkey)
+
+        for i in range(self.chat_messages_index, len(chat)):
 
             chat_message = chat[i][0].split(
                 "#split:#")  # a chat-message is like: username#split:#message, so we need to split this two
             partner_username = chat_message[0]  # from who is the message
             message = chat_message[1]  # the real content / message
             message_flag = chat_message[2]
+            key_flag = ""
             if len(chat_message) > 3:
                 key_flag = chat_message[3]
 
@@ -471,27 +545,25 @@ class Chat(Frame):
             # if such a file doesn't exist, then the current message must have sent a key, which is then saved into
             # a file for further usage
             elif (message_flag == "msg" or message_flag == "img" or message_flag == "pdf") and key_flag == "key":
-                key = b64decode(chat_message[4])
                 is_message_encrypted = True
 
-            if key_flag == "pubkey":  # TODO: I don't think this statement is necessary
-                is_message_encrypted = True
-            elif key_flag == "key":
+            if key_flag == "key":
                 key = b64decode(chat_message[4])
 
             # if the event is an actual message and therefore is encrypted, the iv and the ciphertext are extracted and
             # the message is decrypted
             if is_message_encrypted:
 
-                if os.path.isfile("shared_key") and key_flag == "pubkey":
-                    # this is the case when user2 receives his own message
-                    key = read_shared_key_from_file()
-                    key = key[0:32].encode()
-                elif not os.path.isfile("shared_key") and key_flag == "pubkey":
-                    # user1 receives a message from user2, user1 doesn't have a private key yet
-                    if read_dh_object_from_file().gen_public_key() != int(chat_message[-1]):
-                        key = write_shared_private_key(int(chat_message[-1]))
-                        key = key[0:32].encode()
+                if "pubkey" in chat_message:
+                    sender_pubkey = int(chat_message[-1])
+                    if sender_pubkey != self.pubkey:
+                        self.write_partners_pubkey_to_file(sender_pubkey, chatID)
+                        if self.is_initiator and not key_flag == "key":
+                            self.write_shared_private_key(sender_pubkey, chatID)
+
+                if os.path.isfile(f"shared_key_{chatID}") and not key_flag == "key":
+                    shared_key = self.read_shared_key_from_file(chatID)
+                    key = shared_key[0:32].encode()
 
                 # separate the received message into the initiation vector and the ciphertext
                 message_split = message.split(':')
@@ -501,19 +573,7 @@ class Chat(Frame):
                 cipher = AES.new(key, AES.MODE_CBC, iv)
                 message = unpad(cipher.decrypt(ct), AES.block_size).decode()
 
-                if "pubkey" in chat_message:
-                    if os.path.exists("diffie_hellman"):
-                        # if the keyword pubkey was attached to the message and a file exists, we need to check whether
-                        # they are equal --> if equal: sender is receiving his own message, if not: user1 messages user2
-                        receiver_dh = read_dh_object_from_file()
-                        receiver_dh.gen_public_key()
-
-                        if receiver_dh.gen_public_key() != int(chat_message[-1]):  # we need to create a new dh-object
-                            write_shared_private_key(int(chat_message[-1]))
-
-                    else:  # if the user has no diffie_file, we need to create one and create a private key
-                        write_dh_object_to_file()
-                        write_shared_private_key(int(chat_message[-1]))
+                self.write_message_to_file(message, chatID, chat[i][1], partner_username, message_flag)
 
             if len(chat_message) == 4:
                 if chat_type == "private" and self.partner[0] == self.partner[1] and message_flag == "member":
@@ -523,77 +583,82 @@ class Chat(Frame):
                                 0] = partner_username  # the creator of the group gets the name of his partner for the first time
                             self.partner[0] = partner_username
                             self.username_label.config(text=TextWrapper.shorten_name(self.partner[0], 34))
+                continue
 
-            else:  # length of message == 3
-                if partner_username != self.username:  # message from the partner(s)
-                    # print the message with white background:
-                    if chat_type == "group":
-                        self.listBox1.insert('end', partner_username + ":")
-                        try:
-                            self.listBox1.itemconfig('end', bg='white',
-                                                     foreground=Colorize.name_to_color(partner_username))
-                        except:
-                            self.listBox1.itemconfig('end', bg='white', foreground='#00a86b')
-                        self.listBox2.insert('end', "")
-
-                    if message_flag[0:3] == "pdf":
-                        self.listBox1.insert('end', "Click to open pdf. (" + str(i) + ")")
-                        self.listBox1.itemconfig('end', bg='white')
-                        self.listBox2.insert('end', "")
-                    elif message_flag[0:3] == "img":
-                        self.listBox1.insert('end', "Click to open image. (" + str(i) + ")")
-                        self.listBox1.itemconfig('end', bg='white')
-                        self.listBox2.insert('end', "")
-                    else:
-                        messages = TextWrapper.textWrap(message, 0)
-                        for index in range(len(messages)):
-                            self.listBox1.insert('end', messages[index])
-                            self.listBox1.itemconfig('end', bg='white')
-                            self.listBox2.insert('end', '')
-
-                    self.listBox1.insert('end', "{:<22}{:>16}".format("", time.strftime("%H:%M %d.%m.%Y", time.gmtime(
-                        chat[i][1] + timezone))))
-                    self.listBox1.itemconfig('end', bg='white', foreground="lightgrey")
-                    self.listBox2.insert('end', "")
-
-                    self.listBox1.yview(END)
-                    self.listBox2.yview(END)
-                    self.listBox1.insert('end', '')  # some space to enhance appeal
-                    self.listBox2.insert('end', '')
-
-                else:  # username = self.username: message from the user
-                    # print the message with green background:
-                    if message_flag[0:3] == "pdf":
-                        self.listBox2.insert('end', "Click to open PDF. (" + str(i) + ")")
-                        self.listBox2.itemconfig('end', bg='#dafac9')
-                        self.listBox1.insert('end', '')
-                    elif message_flag[0:3] == "img":
-                        self.listBox2.insert('end', "Click to open image. (" + str(i) + ")")
-                        self.listBox2.itemconfig('end', bg='#dafac9')
-                        self.listBox1.insert('end', '')
-                    else:  # == msg
-                        messages = TextWrapper.textWrap(message, 0)
-                        for i in range(len(messages)):
-                            self.listBox2.insert('end', messages[i])
-                            self.listBox2.itemconfig('end', bg='#dafac9')
-                            self.listBox1.insert('end', '')
-
-                    self.listBox2.insert('end', "{:<22}{:>16}".format("", time.strftime("%H:%M %d.%m.%Y", time.gmtime(
-                        chat[i][1] + timezone))))
-                    self.listBox2.itemconfig('end', bg='#dafac9', foreground="lightgrey")
-                    self.listBox1.insert('end', '')
-
-                    self.listBox2.yview(END)
-                    self.listBox1.yview(END)
-                    self.listBox2.insert('end', '')  # some space to enhance appeal
-                    self.listBox1.insert('end', '')
+        self.print_messages_to_ui(chat_type)
+        self.chat_messages_index = self.stored_messages + 2 if os.path.isfile(f"shared_key_{chatID}") else 1
 
     def updateContent(self, chatID):
         self.add(chatID)
         self.addPartners()
 
-    def loadChat(self,
-                 chat=None):  # when the user clicks on Person in listBox3 this function is called and loads the correct chat and sets up everything needed to start the communication
+    def print_messages_to_ui(self, chat_type):
+
+        for message in self.messages:
+            if message[0] != self.username:  # message from the partner(s)
+                # print the message with white background:
+                if chat_type == "group":
+                    self.listBox1.insert('end', message[1] + ":")
+                    try:
+                        self.listBox1.itemconfig('end', bg='white',
+                                                 foreground=Colorize.name_to_color(message[1]))
+                    except:
+                        self.listBox1.itemconfig('end', bg='white', foreground='#00a86b')
+                    self.listBox2.insert('end', "")
+
+                # message[3] = message_flag --> {"img", "pdf", "msg"}
+                if message[3] == "pdf":
+                    self.listBox1.insert('end', "Click to open pdf.")
+                    self.listBox1.itemconfig('end', bg='white')
+                    self.listBox2.insert('end', "")
+                elif message[3] == "img":
+                    self.listBox1.insert('end', "Click to open image.")
+                    self.listBox1.itemconfig('end', bg='white')
+                    self.listBox2.insert('end', "")
+                else:
+                    messages = TextWrapper.textWrap(message[1], 0)
+                    for index in range(len(messages)):
+                        self.listBox1.insert('end', messages[index])
+                        self.listBox1.itemconfig('end', bg='white')
+                        self.listBox2.insert('end', '')
+
+                self.listBox1.insert('end', "{:<22}{:>16}".format("", message[2]))
+                self.listBox1.itemconfig('end', bg='white', foreground="lightgrey")
+                self.listBox2.insert('end', "")
+
+                self.listBox1.yview(END)
+                self.listBox2.yview(END)
+                self.listBox1.insert('end', '')  # some space to enhance appeal
+                self.listBox2.insert('end', '')
+
+            else:  # username = self.username: message from the user
+                # print the message with green background:
+                if message[3] == "pdf":
+                    self.listBox2.insert('end', "Click to open PDF. (" + str(i) + ")")
+                    self.listBox2.itemconfig('end', bg='#dafac9')
+                    self.listBox1.insert('end', '')
+                elif message[3] == "img":
+                    self.listBox2.insert('end', "Click to open image. (" + str(i) + ")")
+                    self.listBox2.itemconfig('end', bg='#dafac9')
+                    self.listBox1.insert('end', '')
+                else:  # == msg
+                    messages = TextWrapper.textWrap(message[1], 0)
+                    for i in range(len(messages)):
+                        self.listBox2.insert('end', messages[i])
+                        self.listBox2.itemconfig('end', bg='#dafac9')
+                        self.listBox1.insert('end', '')
+
+                self.listBox2.insert('end', "{:<22}{:>16}".format("", message[2]))
+                self.listBox2.itemconfig('end', bg='#dafac9', foreground="lightgrey")
+                self.listBox1.insert('end', '')
+
+                self.listBox2.yview(END)
+                self.listBox1.yview(END)
+                self.listBox2.insert('end', '')  # some space to enhance appeal
+                self.listBox1.insert('end', '')
+
+    def loadChat(self, chat=None):  # when the user clicks on Person in listBox3 this function is called and loads
+        # the correct chat and sets up everything needed to start the communication
         if not chat:
             try:
                 selection = self.listBox3.curselection()[0]  # this gives an int value: first element = 0
@@ -835,8 +900,15 @@ class Chat(Frame):
 
         send_initial_key = True
 
-        if message.split("#split:#")[1] == "msg" or message.split("#split:#")[1] == "img" or message.split("#split:#")[
-            1] == "pdf":
+        if not os.path.isfile(f"diffie_hellman_{chatID}"):
+            dh = self.write_dh_object_to_file(chatID)
+            self.pubkey = dh.gen_public_key()
+        else:
+            self.pubkey = self.read_dh_object_from_file(chatID).gen_public_key()
+
+        if message.split("#split:#")[1] == "msg" or message.split("#split:#")[1] == "img" or \
+                message.split("#split:#")[
+                    1] == "pdf":
 
             generated_key = get_random_bytes(16)
 
@@ -853,10 +925,26 @@ class Chat(Frame):
 
             message_bytes = bytes(to_be_encrypted, 'utf-8')
 
-            if os.path.isfile("shared_key"):
-                generated_key = read_shared_key_from_file()
-                generated_key = bytes(generated_key[0:32], 'utf-8')
+            if os.path.isfile(f"shared_key_{chatID}"):
+                # if this sender is not the initiator we need to generate a new public key in order to create a new
+                self.read_is_initiator(chatID)
+                self.partners_pubkey = self.read_partners_public_key(chatID)
+                if not self.is_initiator and self.send_pubkey:
+                    dh = self.write_dh_object_to_file(chatID)
+                    self.pubkey = dh.gen_public_key()
+                    self.write_shared_private_key(self.partners_pubkey, chatID)
+
+                shared_key = self.read_shared_key_from_file(chatID)
+                generated_key = bytes(shared_key[0:32], 'utf-8')
                 send_initial_key = False
+            else:
+                # if there is a partner_pubkey, we know at least 1 pair of messages was exchanged
+                self.partners_pubkey = self.read_partners_public_key(chatID)
+                if self.partners_pubkey != 0:
+                    self.write_shared_private_key(self.partners_pubkey, chatID)
+                    shared_key = self.read_shared_key_from_file(chatID)
+                    generated_key = bytes(shared_key[0:32], 'utf-8')
+                    send_initial_key = False
 
             cipher = AES.new(generated_key, AES.MODE_CBC)
             ct_bytes = cipher.encrypt(pad(message_bytes, AES.block_size))
@@ -867,17 +955,25 @@ class Chat(Frame):
             # all put back into the required format
             message = encrypted + message[len(message.split("#split:#")[0]):]
 
-            if not os.path.isfile("diffie_hellman"):  # write the newly generated public key to the pubkey file
-                # and attach it to the message
-                write_dh_object_to_file().gen_public_key()
-
             # if this flag is raised, then the message is the first message of the conversation and thereby sends the
             # key which is henceforth used as the symmetric session key
             if send_initial_key:
-                message_pubkey = "#split:#pubkey#split:#" + str(read_dh_object_from_file().gen_public_key())
-                message = message + "#split:#key#split:#" + b64encode(generated_key).decode('utf-8') + message_pubkey
+                if self.send_pubkey:
+                    message_pubkey = "#split:#pubkey#split:#" + str(self.pubkey)
+                    message = message + "#split:#key#split:#" + b64encode(generated_key).decode(
+                        'utf-8') + message_pubkey
+                else:
+                    message = message + "#split:#key#split:#" + b64encode(generated_key).decode('utf-8')
             else:
-                message = message + "#split:#pubkey#split:#" + str(read_dh_object_from_file().gen_public_key())
+                if self.send_pubkey:
+                    if os.path.isfile(f"initiator_{chatID}"):
+                        self.read_is_initiator(chatID)
+                        if self.is_initiator:
+                            self.pubkey = self.write_dh_object_to_file(chatID).gen_public_key()
+
+                    message = message + "#split:#pubkey#split:#" + str(self.pubkey)
+
+            self.send_pubkey = False
 
         to_save = self.username + "#split:#" + message
 
