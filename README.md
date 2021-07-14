@@ -62,9 +62,7 @@ Our implementation additionally requires the following dependencies:
 ## 2. How to use
 
 The usage of our implementation requires the interplay between multiple
-different implementations. We'll demonstrate the usage in a private chat,
-yet a team chat can be operated in more or less exactly the same way.
-For a more detailed dissection of the SubjectiveChat's interface and
+different implementations. For a more detailed dissection of the SubjectiveChat's interface and
 functionality we kindly ask the reader to consult the relevant README.
 This README concerns itself primarily with demonstrating what we have
 actively contributed to the BACnet.
@@ -151,8 +149,8 @@ Chat Feed.
 Our implementation encrypts the messages asymmetrically, which is achieved
 with a Diffie-Hellman-Merkle key exchange. The implementation uses a 32-byte
 private key, which is obtained by both parties sharing a public key. After every 
-cycle of messages the shared private key is changed, therefore providing perfect 
-forward secrecy (PFS). The public key always gets attached to the first message of
+cycle of messages the shared private key is changed, therefore providing 
+forward secrecy and backward secrecy. The public key always gets attached to the first message of
 a new cycle. This way the participants can establish the new shared private key whenever
 a new cycle has begun. If there are multiple messages per cycle the public key is only
 attached to the very first message of this cycle, in order to minimize the workload on 
