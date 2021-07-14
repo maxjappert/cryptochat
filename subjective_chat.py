@@ -932,7 +932,7 @@ class Chat(Frame):
                 if not self.is_initiator and self.send_pubkey:
                     dh = self.write_dh_object_to_file(chatID)
                     self.pubkey = dh.gen_public_key()
-                    dh.gen_shared_key(self.partners_pubkey)
+                    self.write_shared_private_key(self.partners_pubkey, chatID)
 
                 shared_key = self.read_shared_key_from_file(chatID)
                 generated_key = bytes(shared_key[0:32], 'utf-8')
