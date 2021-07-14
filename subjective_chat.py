@@ -558,7 +558,7 @@ class Chat(Frame):
                     sender_pubkey = int(chat_message[-1])
                     if sender_pubkey != self.pubkey:
                         self.write_partners_pubkey_to_file(sender_pubkey, chatID)
-                        if self.is_initiator and not os.path.isfile(f"shared_key_{chatID}") and not key_flag == "key":
+                        if self.is_initiator and not key_flag == "key":
                             self.write_shared_private_key(sender_pubkey, chatID)
 
                 if os.path.isfile(f"shared_key_{chatID}") and not key_flag == "key":
