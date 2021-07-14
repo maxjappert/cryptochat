@@ -150,29 +150,33 @@ Chat Feed.
 
 Our implementation encrypts the messages asymmetrically, which is achieved
 with a Diffie-Hellman-Merkle key exchange. The implementation uses a 32-byte
-private key, which is obtained by both parties sharing a public key. The public
-key gets attached to the first Chat Event, and once the private key has been established,
-it is no longer attached to future Chat Events (in order to minimize load on the
-transport layer, and because it is then no longer needed).
+private key, which is obtained by both parties sharing a public key. After every 
+cycle of messages the shared private key is changed, therefore providing perfect 
+forward secrecy (PFS). The public key always gets attached to the first message of
+a new cycle. This way the participants can establish the new shared private key whenever
+a new cycle has begun. If there are multiple messages per cycle the public key is only
+attached to the very first message of this cycle, in order to minimize the workload on 
+the transport layer.
 
 ### iii. Problems
 
 In order to minimise seemingly redundant transportation of the USB-stick, we decided to
-implement the key exchange as part of the first chat messages. Because the program
-needs both public keys to generate the common private key, the first batch of messages
-is only encrypted with a temporary symmetric key, which is also transmitted as part
-of the Chat Event. Consequently, the first batch of messages is not securely encrypted,
-because the symmetric key is transmitted together with the ciphertext which it encrypted
-(in order to at least make the message seem encrypted at first glance).
-Only the batch of replying messages and all thereafter are encrypted securely with a
+implement the key exchange as part of the first chat messages of every cycle. Because the program
+needs both public keys to generate the common private key, the first cycle of messages
+is only encrypted with a temporary symmetric key, which is also encrypted and then 
+transmitted as part of the Chat Event. Consequently, the first cycle of messages is not
+securely encrypted, because the symmetric key is transmitted together with the ciphertext 
+which it encrypted (in order to at least make the message seem encrypted at first glance).
+Only the replying messages and all thereafter are encrypted securely with a
 truly private key.
 
-On a more advanced level, our implementation is neither forward- nor backward-secure.
-A shared private key exists for each chat, and once an intruder would hypothetically
-obtain a key, they would be able to decrypt all messages in the chat. A possible
-solution would be the Signal Protocol's Double Ratchet Algorithm, which implements
-perfect backward- and forward-secrecy. As a consequence, this means that if an 
-intruder obtained a private key, they could only decrypt at most one message.
+On a more advanced level, our implementation delivers perfect backward- and forward-secrecy
+for every cycle of messages. Meaning that if somehow an intruder would gain access to a 
+private key, the intruder could decrypt all the messages (by all clients) of this cycle, but
+he would not be able to decipher past or future messages. In conclusion our implementation that
+originally aimed to implement the double ratchet algorithm is not exactly as secure as the 
+DR-Algorithm. In an implementation that is secured with the DR-Algorithm, if an intruder obtained
+a private key, they could only decrypt at most one message and not a whole cylce of messages.
 We'd be pleased to hear if someone would integrate such an algorithm into our
 implementation at some future point in time, which would allow for even better
 encryption within the BACnet.
